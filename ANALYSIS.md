@@ -41,7 +41,10 @@ Body: goformId=LOGIN&isTest=false&password=<computed_hash>
 
 Success response: `{"result":"0"}` plus a `Set-Cookie: stok=<HEX24>` header.
 
-The `stok` cookie must be sent with every subsequent request.
+> **Note:** The server does not actually enforce the `stok` cookie or the login
+> step for state-changing commands. The `AD` token is the only mechanism the
+> server validates. Login and session management are client-side conventions
+> in the JS, not server-side requirements.
 
 **Source:** `config.js` → `WEB_ATTR_IF_SUPPORT_SHA256: 2`,
 `util.js` → `SHA256()` with uppercase flag `r=1`,
@@ -125,12 +128,6 @@ session-scoped — fetch it immediately before the POST you want to protect.
 **Turn Wi-Fi OFF:**
 ```
 POST /goform/goform_set_cmd_process
-Cookie: stok=<HEX24>
-Content-Type: application/x-www-form-urlencoded; charset=UTF-8
-X-Requested-With: XMLHttpRequest
-Origin: http://192.168.0.1
-Referer: http://192.168.0.1/index.html
-
 Body: goformId=SET_WIFI_INFO&isTest=false&wifiEnabled=0&AD=<computed>
 ```
 
@@ -138,6 +135,8 @@ Body: goformId=SET_WIFI_INFO&isTest=false&wifiEnabled=0&AD=<computed>
 ```
 Body: goformId=SET_WIFI_INFO&isTest=false&wifiEnabled=1&AD=<computed>
 ```
+
+No headers, cookies, or prior login are required. The `AD` token is sufficient.
 
 Source: `service.js` → `function y` (exported as `setWifiBasicMultiSSIDSwitch`):
 ```javascript
@@ -163,18 +162,13 @@ if (dv.wifiEnabled == "0") {
 `wifi_enable` and most other settings return `""` (empty string) when
 fetched without a valid session or outside of `getWifiBasic()`.
 
-### 1.7 Required Headers
+### 1.7 Headers
 
-| Header | Value |
-|---|---|
-| `Content-Type` | `application/x-www-form-urlencoded; charset=UTF-8` |
-| `X-Requested-With` | `XMLHttpRequest` |
-| `Origin` | `http://192.168.0.1` |
-| `Referer` | `http://192.168.0.1/index.html` |
-| `Cookie` | `stok=<HEX>` |
+No request headers are required. The server ignores `User-Agent`, `Accept`,
+`X-Requested-With`, `Origin`, `Referer`, and the `stok` session cookie.
 
-The firmware does **not** strictly validate `User-Agent` or `Accept-Language`,
-but `X-Requested-With` and `Origin` are necessary.
+For POST requests, `urllib` sets `Content-Type: application/x-www-form-urlencoded`
+automatically — no manual header is needed.
 
 ### 1.8 Full JS File Inventory
 
@@ -230,9 +224,8 @@ That last point was the confusing part: wrong AD and missing AD produced
 **the same response**, making it impossible to tell from the outside
 whether the AD was the problem or something else.
 
-The firmware apparently validates `AD` last, after other checks, so an
-early-failing check (the stok was valid, but something about the session
-state was wrong) masked the AD error entirely.
+The server apparently validates `AD` last, after other checks, so an
+early-failing check masked the AD error entirely.
 
 ### Chapter 3 — The one-second polling clue
 
@@ -332,9 +325,9 @@ the session.
 **5. When identical responses appear for both valid and invalid inputs,
 look upstream.**
 
-`failure` for wrong AD and `failure` for missing AD means the firmware
+`failure` for wrong AD and `failure` for missing AD means the server
 is rejecting the request before it reaches AD validation. Look for a
-state or field the firmware checks first — in this case the AD prefix
+state or field the server checks first — in this case the AD prefix
 was wrong, making the token always invalid regardless of RD.
 
 **6. Follow the call chain for every global variable access.**
@@ -378,15 +371,15 @@ There are two reliable paths to a one-attempt solution:
 1. Open DevTools Network tab before touching the page.
 2. Log in, go to Wi-Fi settings, toggle state, click Apply.
 3. Copy the POST as cURL. Run it — it works.
-4. The stok cookie expires, so automate re-login using the same
-   double-SHA256 scheme visible in `service.js`.
-5. For the AD: the captured curl shows the AD value. Fetching `RD`
+4. For the AD: the captured curl shows the AD value. Fetching `RD`
    at the same moment gives the nonce. Solving
    `AD = SHA256(X + RD)` for X gives `SHA256(rd0+rd1)`. Then
    `getLanguage` reveals `rd0` and `rd1` directly.
+5. Test whether the session cookie is actually required by replaying
+   the curl without it. (It is not — only AD matters.)
 
 Total JS analysis needed: **zero** for the initial working curl.
-JS analysis for automation: only `service.js` login + AD functions.
+JS analysis for automation: only the AD computation in `service.js`.
 
 ### Path B — Full static analysis, correct order
 
@@ -408,14 +401,14 @@ that appear most relevant (`service.js`, `util.js`).
 | Did not capture browser DevTools POST body | Lost ground truth |
 | Identical failure response for multiple distinct problems | Masked which layer was failing |
 | Tested `SET_WIFI_INFO` before simpler goformIds | Could not isolate session vs command issues |
+| Assumed browser-observed cookies and headers were required | Kept unnecessary login and session management |
 
 ### Conclusion
 
 A well-structured one-attempt approach is achievable. The key discipline
 is: **get a confirmed working request from the browser before writing
-any automation code**, then verify each assumption (session, headers, AD)
-in isolation with the simplest possible command before tackling the
-target command.
+any automation code**, then strip it down by testing each element
+(session cookie, headers, login) in isolation to find the true minimum.
 
 Static JS analysis alone is fragile for this class of problem because:
 - RequireJS lazy-loads modules not visible in the initial page source
@@ -426,3 +419,8 @@ The two-minute browser capture would have bypassed weeks of iteration.
 Static analysis remains valuable for understanding *why* things work and
 for building a maintainable automation — but it should follow, not
 replace, a live capture.
+
+A second simplification pass — testing every browser-observed parameter
+for necessity — turned 131 lines into 47, removed login entirely, and
+eliminated all custom headers. "Observed in the browser" is a starting
+hypothesis, not a specification.
