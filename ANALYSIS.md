@@ -41,10 +41,11 @@ Body: goformId=LOGIN&isTest=false&password=<computed_hash>
 
 Success response: `{"result":"0"}` plus a `Set-Cookie: stok=<HEX24>` header.
 
-> **Note:** The server does not actually enforce the `stok` cookie or the login
-> step for state-changing commands. The `AD` token is the only mechanism the
-> server validates. Login and session management are client-side conventions
-> in the JS, not server-side requirements.
+> **Note:** Login IS required, but not because of the `stok` cookie. The login
+> call initializes server-side state that makes `RD` non-empty. Without it, `RD`
+> returns `""` and the `AD` token cannot be computed. The `stok` cookie itself
+> is not checked on subsequent requests — the server ties session state to the
+> connection by IP or an internal slot, not the cookie value.
 
 **Source:** `config.js` → `WEB_ATTR_IF_SUPPORT_SHA256: 2`,
 `util.js` → `SHA256()` with uppercase flag `r=1`,
@@ -136,7 +137,9 @@ Body: goformId=SET_WIFI_INFO&isTest=false&wifiEnabled=0&AD=<computed>
 Body: goformId=SET_WIFI_INFO&isTest=false&wifiEnabled=1&AD=<computed>
 ```
 
-No headers, cookies, or prior login are required. The `AD` token is sufficient.
+No headers or cookies are required. Login must be called first (it
+initializes the server-side `RD` nonce), but the returned `stok`
+cookie can be discarded.
 
 Source: `service.js` → `function y` (exported as `setWifiBasicMultiSSIDSwitch`):
 ```javascript
@@ -162,13 +165,18 @@ if (dv.wifiEnabled == "0") {
 `wifi_enable` and most other settings return `""` (empty string) when
 fetched without a valid session or outside of `getWifiBasic()`.
 
-### 1.7 Headers
+### 1.7 Headers and Session
 
 No request headers are required. The server ignores `User-Agent`, `Accept`,
-`X-Requested-With`, `Origin`, `Referer`, and the `stok` session cookie.
+`X-Requested-With`, `Origin`, and `Referer`.
 
 For POST requests, `urllib` sets `Content-Type: application/x-www-form-urlencoded`
 automatically — no manual header is needed.
+
+The `stok` cookie from the login response can be discarded. However, **login
+itself must be called** — the POST to `goformId=LOGIN` initializes a server-side
+slot that populates `RD`. Without this, `GET ?cmd=RD` returns `""` and `AD`
+cannot be computed.
 
 ### 1.8 Full JS File Inventory
 
@@ -375,8 +383,9 @@ There are two reliable paths to a one-attempt solution:
    at the same moment gives the nonce. Solving
    `AD = SHA256(X + RD)` for X gives `SHA256(rd0+rd1)`. Then
    `getLanguage` reveals `rd0` and `rd1` directly.
-5. Test whether the session cookie is actually required by replaying
-   the curl without it. (It is not — only AD matters.)
+5. Test whether the `stok` cookie is required by replaying the curl
+   without it — it is not. Login itself IS required (it initializes
+   the server-side `RD` slot), but the cookie it returns is not.
 
 Total JS analysis needed: **zero** for the initial working curl.
 JS analysis for automation: only the AD computation in `service.js`.

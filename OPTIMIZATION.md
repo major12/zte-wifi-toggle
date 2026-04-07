@@ -27,8 +27,11 @@ One test: send `SET_WIFI_INFO` without the cookie. Result: `{"result":"success"}
 The cookie was never necessary.
 
 **Round 3 — follow the thread**: *If the cookie isn't checked, is login checked?*
-Send the command with no login at all — just `AD`. Result: `{"result":"success"}`.
-Login, `stok`, and `LD` were all dead weight. Removed entirely.
+Send the command with no prior login — just `AD`. Result: `{"result":"success"}`.
+Looked like login was dead weight too — but this only worked because a previous
+session was still live on the device. After a real logout or cold start, `RD`
+returns `""` without login, making `AD` impossible to compute. Login IS required;
+the `stok` cookie it returns is not.
 
 **Round 4 — naming**: `get` → `query` → `goform_get`. Each name more precise than
 the last, matching the actual endpoint name `goform_get_cmd_process`.
@@ -95,8 +98,8 @@ Common sources of unnecessary complexity in HTTP scripts built from browser trac
 | Accept / Accept-Language headers | Rarely |
 | X-Requested-With: XMLHttpRequest | Sometimes (CSRF guard) — test it |
 | Origin / Referer headers | Sometimes — test it |
-| Session cookies | Sometimes — test it |
-| Login step | Sometimes — test it |
+| Session cookie (e.g. stok) | Test it — may not be checked even if issued |
+| Login step | Test it carefully — may initialize server-side state even if the cookie is not needed |
 | Content-Type on POST | Yes — urllib sets it automatically |
 
 ### 5. Test incrementally, not all at once
