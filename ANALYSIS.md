@@ -283,6 +283,31 @@ as `""` in `main.js` purely as a default — they are always overwritten.
 
 With the fix applied the first `SET_WIFI_INFO` POST returned `{"result":"success"}`.
 
+### Chapter 5 — The false optimisation and the hidden state
+
+After the script was working, a simplification pass tested whether each
+browser-observed parameter was truly necessary. The `stok` cookie was
+dropped — still worked. Then login was dropped entirely — still worked.
+
+The script shipped without login. **It worked in every test because a
+browser session was always active on the device from manual testing.**
+The server's hidden state had already been initialized.
+
+The bug only surfaced in real usage: after a cold start or after clicking
+logout in the browser UI, `GET ?cmd=RD` returned `""`. Without a non-empty
+`RD`, `AD` cannot be computed and every command fails silently.
+
+**Root cause:** The server stores per-session state (the `RD` nonce) in
+an internal slot initialized by the login POST. This state is not tied
+to the `stok` cookie — it persists as long as any session is active. The
+tests never triggered the empty-state path because a browser session was
+always present during development.
+
+**What would have caught it earlier:** running `logout` through the browser
+UI — or calling `goformId=LOGOUT` via script — and then immediately retrying
+the toggle command. A single logout test would have produced `{"result":"failure"}`
+and pointed straight at the missing login step.
+
 ---
 
 ## Part 3 — Recommendations for ML Models
@@ -344,6 +369,24 @@ When `service.js` reads `rd0`, trace where `rd0` could have been set
 by the time that line runs. JavaScript's global scope means any file
 in the application can write to it. The declaration file is rarely the
 only writer.
+
+**7. Test state-boundary conditions before declaring something unnecessary.**
+
+Before removing any step that touches server state (login, session init,
+nonce fetch), test the script from a clean state:
+
+- Log out via the browser UI (or `goformId=LOGOUT`) and immediately run the script.
+- Power-cycle the device if possible.
+- Run the script twice in quick succession from a fresh terminal.
+
+If a step was only "not needed" because a previous session was still warm,
+removing it will produce a silent failure in production that never appears
+in development.
+
+```
+Prompt: "Before removing the login step, log out through the browser UI
+and run the script again. Confirm it still works from a cold session."
+```
 
 ### Recommended prompt strategy for a fresh attempt
 
@@ -411,6 +454,7 @@ that appear most relevant (`service.js`, `util.js`).
 | Identical failure response for multiple distinct problems | Masked which layer was failing |
 | Tested `SET_WIFI_INFO` before simpler goformIds | Could not isolate session vs command issues |
 | Assumed browser-observed cookies and headers were required | Kept unnecessary login and session management |
+| Removed login without testing from a cold/logged-out state | Script broke in real usage; hidden server state only visible after logout |
 
 ### Conclusion
 
@@ -430,6 +474,10 @@ for building a maintainable automation — but it should follow, not
 replace, a live capture.
 
 A second simplification pass — testing every browser-observed parameter
-for necessity — turned 131 lines into 47, removed login entirely, and
-eliminated all custom headers. "Observed in the browser" is a starting
-hypothesis, not a specification.
+for necessity — turned 131 lines into 57, eliminated all custom headers,
+and showed the `stok` cookie is not needed. Login was briefly removed too,
+but real-world usage (after logout) revealed it initializes hidden
+server-side state that `RD` depends on. The final lesson: always test
+simplifications from a cold, logged-out state, not just from a warm session.
+"Observed in the browser" is a starting hypothesis, not a specification;
+but "works in dev" is not the same as "works in production."
