@@ -18,38 +18,29 @@ def goform_get(host: str, cmd: str) -> dict:
         return json.loads(r.read())
 
 
-def login(host: str, password: str) -> None:
-    """Login is required to initialize server-side RD state. The stok cookie is discarded."""
-    ld = goform_get(host, "LD")["LD"]
-    urllib.request.urlopen(
-        urllib.request.Request(
-            host + "/goform/goform_set_cmd_process",
-            data=urllib.parse.urlencode({
-                "goformId": "LOGIN",
-                "isTest": "false",
-                "password": sha256u(sha256u(password) + ld),
-            }).encode(),
-        ),
-        timeout=15,
-    )
-
-
-def set_wifi(host: str, enable: bool) -> None:
-    lang = goform_get(host, "Language,cr_version,wa_inner_version&multi_data=1")
-    ad_prefix = sha256u(lang["wa_inner_version"] + lang["cr_version"])
-    rd = goform_get(host, "RD")["RD"]
-
-    body = urllib.parse.urlencode({
-        "goformId": "SET_WIFI_INFO",
-        "isTest": "false",
-        "wifiEnabled": "1" if enable else "0",
-        "AD": sha256u(ad_prefix + rd),
-    }).encode()
+def goform_post(host: str, fields: dict) -> dict:
+    body = urllib.parse.urlencode({"isTest": "false", **fields}).encode()
     with urllib.request.urlopen(
         urllib.request.Request(host + "/goform/goform_set_cmd_process", data=body),
         timeout=15,
     ) as r:
-        result = json.loads(r.read())
+        return json.loads(r.read())
+
+
+def login(host: str, password: str) -> None:
+    # Login initializes server-side RD state; the returned stok cookie is not needed.
+    ld = goform_get(host, "LD")["LD"]
+    goform_post(host, {"goformId": "LOGIN", "password": sha256u(sha256u(password) + ld)})
+
+
+def set_wifi(host: str, enable: bool) -> None:
+    info = goform_get(host, "RD,cr_version,wa_inner_version&multi_data=1")
+    ad = sha256u(sha256u(info["wa_inner_version"] + info["cr_version"]) + info["RD"])
+    result = goform_post(host, {
+        "goformId": "SET_WIFI_INFO",
+        "wifiEnabled": "1" if enable else "0",
+        "AD": ad,
+    })
     if result.get("result") != "success":
         raise RuntimeError(f"Command failed: {result}")
 
